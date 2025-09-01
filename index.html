@@ -94,11 +94,19 @@ async function poll(){
     const nowLabel = new Date().toLocaleTimeString();
     rpmData.labels.push(nowLabel);
     rpmData.datasets[0].data.push(j.calls_per_minute ?? 0);
-    if(rpmData.labels.length > 30){ // keep last 30 points
-      rpmData.labels.shift();
-      rpmData.datasets[0].data.shift();
-    }
-    rpmChart.update();
+// Update chart
+const nowLabel = new Date().toLocaleTimeString();
+rpmData.labels.push(nowLabel);
+rpmData.datasets[0].data.push(j.calls_per_minute ?? 0);
+
+// REMOVE or comment out this trimming block
+// if(rpmData.labels.length > 30){
+//   rpmData.labels.shift();
+//   rpmData.datasets[0].data.shift();
+// }
+
+rpmChart.update();
+
 
   }catch(err){
     elStatus.textContent = 'metrics error: '+err.message;
