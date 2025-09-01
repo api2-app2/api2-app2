@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>API Call Meter</title>
+<style>
+  :root { --bg:#0b1220; --fg:#e9f2ff; --muted:#9fb3d1; --card:#14233d; }
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  .wrap{display:grid;place-items:center;height:100%}
+  .card{background:var(--card);border:1px solid rgba(255,255,255,.12);border-radius:14px;
+        box-shadow:0 8px 30px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.06);
+        padding:22px 26px; width:min(520px,92vw)}
+  h1{margin:0 0 8px;font-weight:700;font-size:22px}
+  p{margin:4px 0 16px;color:var(--muted);font-size:14px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px}
+  .box{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.10);border-radius:12px;padding:14px}
+  .label{font-size:12px;color:var(--muted);letter-spacing:.02em;text-transform:uppercase}
+  .value{font-size:34px;font-weight:800;margin-top:6px;line-height:1}
+  .row{display:flex;gap:10px;align-items:center;margin-top:16px}
+  button{cursor:pointer;background:#1e90ff;border:none;color:#fff;border-radius:10px;padding:10px 14px;font-weight:700}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>API Call Meter</h1>
+      <p>Live view of total requests reaching your API (excludes this dashboard’s polling).</p>
+      <div class="grid">
+        <div class="box">
+          <div class="label">Total API calls</div>
+          <div id="total" class="value">—</div>
+        </div>
+        <div class="box">
+          <div class="label">Calls per minute</div>
+          <div id="rpm" class="value">—</div>
+        </div>
+      </div>
+
+      <div class="row">
+        <button id="poke">Make a test call</button>
+        <span class="mono" id="status">waiting…</span>
+      </div>
+    </div>
+  </div>
+
+<script>
+const elTotal = document.getElementById('total');
+const elRpm   = document.getElementById('rpm');
+const elStatus= document.getElementById('status');
+const btn     = document.getElementById('poke');
+
+// Poll metrics every second
+async function poll(){
+  try{
+    const r = await fetch('/metrics', { cache:'no-store' });
+    if(!r.ok) throw new Error('metrics http '+r.status);
+    const j = await r.json();
+    elTotal.textContent = (j.total_calls ?? 0).toLocaleString();
+    elRpm.textContent   = (j.calls_per_minute ?? 0).toLocaleString();
+    elStatus.textContent = 'last update: '+new Date().toLocaleTimeString();
+  }catch(err){
+    elStatus.textContent = 'metrics error: '+err.message;
+  }
+}
+setInterval(poll, 1000);
+poll();
+
+// A lightweight "poke" that will increment the counter
+btn.onclick = async () => {
+  elStatus.textContent = 'sending /api/ping…';
+  try{
+    const r = await fetch('/api/ping', { cache:'no-store' });
+    elStatus.textContent = r.ok ? 'ping ok' : ('ping http '+r.status);
+  }catch(err){
+    elStatus.textContent = 'ping error: '+err.message;
+  }
+};
+</script>
+</body>
+</html>
