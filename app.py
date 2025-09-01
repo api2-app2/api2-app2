@@ -21,6 +21,35 @@ import json
 
 app = FastAPI(title="AP Elections API Simulator")
 
+# --- add near the top of your FastAPI file ---
+import time
+from collections import deque
+
+TOTAL_CALLS = 0
+REQUEST_TIMES = deque(maxlen=10000)  # ~10k recent timestamps
+
+@app.middleware("http")
+async def _count_calls(request, call_next):
+    # don't count the dashboard poll itself
+    is_metrics = request.url.path == "/metrics"
+    resp = await call_next(request)
+    if not is_metrics:
+        global TOTAL_CALLS
+        TOTAL_CALLS += 1
+        REQUEST_TIMES.append(time.time())
+    return resp
+
+@app.get("/metrics")
+def metrics():
+    now = time.time()
+    # calls within last 60s
+    last_min = [t for t in REQUEST_TIMES if now - t <= 60]
+    return {
+        "total_calls": TOTAL_CALLS,
+        "calls_per_minute": len(last_min)
+    }
+
+
 # ---------------------------- Tunables ---------------------------- #
 UPDATE_BUCKETS  = int(os.getenv("UPDATE_BUCKETS", "36"))  # ∝ how “live” the ticking feels
 BASELINE_DRIFT  = int(os.getenv("BASELINE_DRIFT", "0"))   # tiny per-tick drift when not selected
