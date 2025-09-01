@@ -90,10 +90,7 @@ async function poll(){
     elRpm.textContent   = (j.calls_per_minute ?? 0).toLocaleString();
     elStatus.textContent = 'last update: '+new Date().toLocaleTimeString();
 
-    // Update chart
-    const nowLabel = new Date().toLocaleTimeString();
-    rpmData.labels.push(nowLabel);
-    rpmData.datasets[0].data.push(j.calls_per_minute ?? 0);
+    
 // Update chart
 const nowLabel = new Date().toLocaleTimeString();
 rpmData.labels.push(nowLabel);
