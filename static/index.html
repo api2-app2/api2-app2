@@ -10,7 +10,7 @@
   .wrap{display:grid;place-items:center;height:100%}
   .card{background:var(--card);border:1px solid rgba(255,255,255,.12);border-radius:14px;
         box-shadow:0 8px 30px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.06);
-        padding:22px 26px; width:min(520px,92vw)}
+        padding:22px 26px; width:min(640px,92vw)}
   h1{margin:0 0 8px;font-weight:700;font-size:22px}
   p{margin:4px 0 16px;color:var(--muted);font-size:14px}
   .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px}
@@ -20,7 +20,9 @@
   .row{display:flex;gap:10px;align-items:center;margin-top:16px}
   button{cursor:pointer;background:#1e90ff;border:none;color:#fff;border-radius:10px;padding:10px 14px;font-weight:700}
   .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--muted);font-size:12px}
+  canvas{margin-top:20px;width:100%!important;height:220px!important}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
   <div class="wrap">
@@ -38,6 +40,8 @@
         </div>
       </div>
 
+      <canvas id="rpmChart"></canvas>
+
       <div class="row">
         <button id="poke">Make a test call</button>
         <span class="mono" id="status">waiting…</span>
@@ -51,6 +55,31 @@ const elRpm   = document.getElementById('rpm');
 const elStatus= document.getElementById('status');
 const btn     = document.getElementById('poke');
 
+// Chart.js setup
+const ctx = document.getElementById('rpmChart').getContext('2d');
+const rpmData = {
+  labels: [],
+  datasets: [{
+    label: 'Calls per minute',
+    data: [],
+    borderColor: '#1e90ff',
+    backgroundColor: 'rgba(30,144,255,0.2)',
+    fill: true,
+    tension: 0.3
+  }]
+};
+const rpmChart = new Chart(ctx, {
+  type: 'line',
+  data: rpmData,
+  options: {
+    scales: {
+      x: { ticks: { color: '#9fb3d1' } },
+      y: { beginAtZero: true, ticks: { color: '#9fb3d1' } }
+    },
+    plugins: { legend: { labels: { color: '#e9f2ff' } } }
+  }
+});
+
 // Poll metrics every second
 async function poll(){
   try{
@@ -60,6 +89,17 @@ async function poll(){
     elTotal.textContent = (j.total_calls ?? 0).toLocaleString();
     elRpm.textContent   = (j.calls_per_minute ?? 0).toLocaleString();
     elStatus.textContent = 'last update: '+new Date().toLocaleTimeString();
+
+    // Update chart
+    const nowLabel = new Date().toLocaleTimeString();
+    rpmData.labels.push(nowLabel);
+    rpmData.datasets[0].data.push(j.calls_per_minute ?? 0);
+    if(rpmData.labels.length > 30){ // keep last 30 points
+      rpmData.labels.shift();
+      rpmData.datasets[0].data.shift();
+    }
+    rpmChart.update();
+
   }catch(err){
     elStatus.textContent = 'metrics error: '+err.message;
   }
