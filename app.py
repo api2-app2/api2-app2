@@ -379,6 +379,18 @@ def districts_state_ru(
     xml = "\n".join(parts)
     return Response(content=xml, media_type="application/xml")
 
+from fastapi.staticfiles import StaticFiles
+
+# mount /static for CSS/JS if needed
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# serve the dashboard at "/"
+@app.get("/", response_class=Response)
+def read_index():
+    with open("index.html", "r", encoding="utf-8") as f:
+        return Response(content=f.read(), media_type="text/html")
+
+
 # ----------------------------- Local dev -------------------------- #
 if __name__ == "__main__":
     import uvicorn
