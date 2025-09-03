@@ -1,36 +1,46 @@
-# api1.py — AP Elections API simulator with officeId (P/S/G/H) support
+# app.py — AP Elections API simulator (randomizes every 30s)
 #
 # Endpoints:
 #   - /api/ping
+#   - /metrics                         -> {"total_calls": ..., "calls_per_minute": ...}
 #   - /v2/elections/{date}?statepostal=XX&raceTypeId=G&raceId=0&level=ru&officeId=P|S|G
 #       -> county-level <ReportingUnit ...><Candidate .../></ReportingUnit>
 #   - /v2/districts/{date}?statepostal=XX&level=ru&officeId=H
 #       -> congressional-district <ReportingUnit ...><Candidate .../></ReportingUnit>
 #
-# Notes:
-# - Vote counts are deterministic per FIPS/district but “tick” upwards in staggered buckets.
-# - Statewide candidates for S/G are deterministic by state+office; House candidates by district.
-# - President uses fixed names (Trump/Harris/Kennedy) to mirror typical visuals.
+# Change vs original:
+#   - NEW: EPOCH_SECONDS (default 30). Every epoch all vote totals re-randomize.
+#   - Names/parties and XML structure unchanged. Metrics preserved.
+#
+# Run (dev):
+#   uvicorn app:app --reload --port 5022
+#
+# Env knobs:
+#   EPOCH_SECONDS=30   # how often a totally new dataset is produced
+#   UPDATE_BUCKETS=36  # kept for compatibility (not used for growth anymore)
+#   BASELINE_DRIFT=0   # kept for compatibility (not used)
+#   TICK_SECONDS=10    # kept for compatibility (not used)
+#
+# Requires cb_2024_us_cd119_500k.json present in working directory.
 
-import os, time, re, hashlib, httpx
+import os, time, re, hashlib, json
 from typing import Dict, List, Tuple
+import httpx
+
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import PlainTextResponse, Response
-import json
+from fastapi.staticfiles import StaticFiles
 
+# ---------------------------- App & Metrics ---------------------------- #
 
-app = FastAPI(title="AP Elections API Simulator")
+app = FastAPI(title="AP Elections API Simulator (30s random epochs)")
 
-# --- add near the top of your FastAPI file ---
-import time
 from collections import deque
-
 TOTAL_CALLS = 0
-REQUEST_TIMES = deque(maxlen=10000)  # ~10k recent timestamps
+REQUEST_TIMES = deque(maxlen=10000)
 
 @app.middleware("http")
-async def _count_calls(request, call_next):
-    # don't count the dashboard poll itself
+async def _count_calls(request: Request, call_next):
     is_metrics = request.url.path == "/metrics"
     resp = await call_next(request)
     if not is_metrics:
@@ -42,21 +52,21 @@ async def _count_calls(request, call_next):
 @app.get("/metrics")
 def metrics():
     now = time.time()
-    # calls within last 60s
     last_min = [t for t in REQUEST_TIMES if now - t <= 60]
-    return {
-        "total_calls": TOTAL_CALLS,
-        "calls_per_minute": len(last_min)
-    }
+    return {"total_calls": TOTAL_CALLS, "calls_per_minute": len(last_min)}
 
+@app.get("/api/ping", response_class=PlainTextResponse)
+def ping():
+    return "pong"
 
 # ---------------------------- Tunables ---------------------------- #
-UPDATE_BUCKETS  = int(os.getenv("UPDATE_BUCKETS", "36"))  # ∝ how “live” the ticking feels
-BASELINE_DRIFT  = int(os.getenv("BASELINE_DRIFT", "0"))   # tiny per-tick drift when not selected
-TICK_SECONDS    = int(os.getenv("TICK_SECONDS", "10"))    # 10s by default
+
+UPDATE_BUCKETS  = int(os.getenv("UPDATE_BUCKETS", "36"))  # kept for compat
+BASELINE_DRIFT  = int(os.getenv("BASELINE_DRIFT", "0"))   # kept for compat
+TICK_SECONDS    = int(os.getenv("TICK_SECONDS", "10"))    # kept for compat
+EPOCH_SECONDS   = int(os.getenv("EPOCH_SECONDS", "30"))   # << NEW
 
 US_ATLAS_COUNTIES_URL = "https://cdn.jsdelivr.net/npm/us-atlas@3/counties-10m.json"
-US_CONGRESS_TOPO_URL = "cb_2024_us_cd119_500k.json"
 
 STATE_FIPS_TO_USPS = {
     "01":"AL","02":"AK","04":"AZ","05":"AR","06":"CA","08":"CO","09":"CT","10":"DE","11":"DC",
@@ -64,245 +74,208 @@ STATE_FIPS_TO_USPS = {
     "22":"LA","23":"ME","24":"MD","25":"MA","26":"MI","27":"MN","28":"MS","29":"MO","30":"MT",
     "31":"NE","32":"NV","33":"NH","34":"NJ","35":"NM","36":"NY","37":"NC","38":"ND","39":"OH",
     "40":"OK","41":"OR","42":"PA","44":"RI","45":"SC","46":"SD","47":"TN","48":"TX","49":"UT",
-    "50":"VT","51":"VA","53":"WA","54":"WV","55":"WI","56":"WY",
-    "72":"PR"
+    "50":"VT","51":"VA","53":"WA","54":"WV","55":"WI","56":"WY","72":"PR"
 }
 USPS_TO_STATE_FIPS = {v:k for k,v in STATE_FIPS_TO_USPS.items()}
-
 PARISH_STATES = {"LA"}
-INDEPENDENT_CITY_STATES = {"VA"}  # city-county equivalents
+INDEPENDENT_CITY_STATES = {"VA"}
 
 # ----------------------- Helpers / RNG / Names -------------------- #
+
 def seeded_rng_u32(seed: str) -> int:
     h = hashlib.blake2b(seed.encode("utf-8"), digest_size=4).digest()
     return int.from_bytes(h, "big")
 
-def _tick_bucket_key() -> int:
-    # map time to 10s (or TICK_SECONDS) “step”
-    return int(time.time() // max(1, TICK_SECONDS))
-
-def county_bucket(fips: str) -> int:
-    return seeded_rng_u32(fips) % max(1, UPDATE_BUCKETS)
-
-def district_bucket(did: str) -> int:
-    return seeded_rng_u32(did) % max(1, UPDATE_BUCKETS)
+def _epoch_key() -> int:
+    # A new integer every EPOCH_SECONDS; used to fully randomize totals
+    return int(time.time() // max(1, EPOCH_SECONDS))
 
 def apize_name(usps: str, canonical: str) -> str:
     n = canonical
-    if n.startswith("Saint "):
-        n = "St. " + n[6:]
+    if n.startswith("Saint "): n = "St. " + n[6:]
     n = n.replace("Doña", "Dona")
     n = re.sub(r"\bLa\s+Salle\b", "LaSalle", n)
     n = n.replace("DeKalb", "De Kalb")
     return n
 
 def county_suffix(usps: str, name: str) -> str:
-    # Keep "City" county-equivalents as-is (Carson City NV, all VA independent cities, DC style names, etc.)
-    if name.lower().endswith("city"):
+    if name.lower().endswith("city"):       # Carson City NV, VA indep. cities, DC, etc.
         return name
     if usps in PARISH_STATES:
         return name if name.lower().endswith("parish") else f"{name} Parish"
     return name if name.lower().endswith("county") else f"{name} County"
 
-
-# District naming like “1st Congressional District”
 def ordinal(n: int) -> str:
     return "%d%s" % (n, "th" if 11<=n%100<=13 else {1:"st",2:"nd",3:"rd"}.get(n%10, "th"))
 
 def district_label(n: int) -> str:
     return f"{ordinal(n)} Congressional District"
 
-# Random-ish (deterministic) candidate name bank
-FIRSTS = ["Alex","Taylor","Jordan","Casey","Riley","Avery","Morgan","Quinn","Hayden","Rowan","Elliot","Jesse","Drew","Parker","Reese"]
-LASTS  = ["Smith","Johnson","Brown","Jones","Garcia","Miller","Davis","Martinez","Clark","Lewis","Walker","Young","Allen","King","Wright"]
+FIRSTS = ["Alex","Taylor","Jordan","Casey","Riley","Avery","Morgan","Quinn","Hayden","Rowan",
+          "Elliot","Jesse","Drew","Parker","Reese"]
+LASTS  = ["Smith","Johnson","Brown","Jones","Garcia","Miller","Davis","Martinez","Clark","Lewis",
+          "Walker","Young","Allen","King","Wright"]
 PARTY_POOL = ["REP","DEM","IND"]
 
 def gen_cd_candidates(did: str, n: int = 3) -> List[Tuple[str,str]]:
-    """Return list of (FullName, Party) deterministic by district id."""
     base = seeded_rng_u32(did)
-    out = []
-    used = set()
+    out, used = [], set()
     for i in range(n):
         f = FIRSTS[(base + i*13) % len(FIRSTS)]
         l = LASTS[(base // 7 + i*17) % len(LASTS)]
         nm = f"{f} {l}"
-        if nm in used:
-            nm = f"{nm} Jr."
+        if nm in used: nm = f"{nm} Jr."
         used.add(nm)
         party = PARTY_POOL[(base // (i+3)) % len(PARTY_POOL)] if i < 3 else "IND"
         out.append((nm, party))
-    # Ensure top two are REP and DEM for color balance
+    # Ensure REP & DEM among top two
     names = [x for x in out]
     have = {p for _,p in names[:2]}
-    if "REP" not in have:
-        names[0] = (names[0][0], "REP")
-    if "DEM" not in have:
-        names[1] = (names[1][0], "DEM")
+    if "REP" not in have: names[0] = (names[0][0], "REP")
+    if "DEM" not in have: names[1] = (names[1][0], "DEM")
     return names
 
 def gen_statewide_candidates(usps: str, office: str, n: int = 3) -> List[Tuple[str,str]]:
-    """
-    Deterministic statewide slate per state+office.
-    For President we return fixed names to match common on-air visuals.
-    """
     office = (office or "P").upper()
     if office == "P":
         return [("Donald Trump","REP"), ("Kamala Harris","DEM"), ("Robert Kennedy","IND")]
     base = seeded_rng_u32(f"{usps}-{office}")
-    out = []
-    used = set()
+    out, used = [], set()
     for i in range(n):
         f = FIRSTS[(base + i*11) % len(FIRSTS)]
         l = LASTS[(base // 5 + i*7) % len(LASTS)]
         nm = f"{f} {l}"
-        if nm in used:
-            nm = f"{nm} II"
+        if nm in used: nm = f"{nm} II"
         used.add(nm)
         party = PARTY_POOL[(base // (i+2)) % len(PARTY_POOL)] if i < 3 else "IND"
         out.append((nm, party))
-    # Ensure REP/DEM among first two
     names = [x for x in out]
     have = {p for _,p in names[:2]}
-    if "REP" not in have:
-        names[0] = (names[0][0], "REP")
-    if "DEM" not in have:
-        names[1] = (names[1][0], "DEM")
+    if "REP" not in have: names[0] = (names[0][0], "REP")
+    if "DEM" not in have: names[1] = (names[1][0], "DEM")
     return names
 
-def simulated_votes(fips: str) -> Tuple[int,int,int]:
-    base_seed = seeded_rng_u32(fips)
+# --------------------- Randomized vote models (30s) -------------------- #
+
+def simulated_votes_30s(fips: str) -> Tuple[int,int,int]:
+    """
+    County-level 3-way totals. Fully re-randomized each EPOCH_SECONDS window.
+    """
+    epoch = _epoch_key()
+    base_seed = seeded_rng_u32(f"{fips}-{epoch}")
     r1 = (base_seed & 0xFFFF)
     r2 = ((base_seed >> 16) & 0xFFFF)
-    tick = _tick_bucket_key()
 
+    # Random total per epoch: 2k–250k + jitter
     base_total = 2000 + (base_seed % 250000)
-    rep = int(base_total * (0.35 + (r1 % 30) / 100.0))
-    dem = base_total - rep
-    ind = int(base_total * (0.01 + (r2 % 3) / 100.0))
 
-    current_bucket = tick % max(1, UPDATE_BUCKETS)
-    my_bucket      = county_bucket(fips)
-    growth = 20 + (base_seed % 20)
+    # Random split with mild bias; ensure non-negative
+    rep = int(base_total * (0.30 + (r1 % 40) / 100.0))  # 30–70%
+    dem = int(base_total * (0.20 + (r2 % 55) / 100.0))  # 20–75%
+    # Whatever remains goes to IND, but ensure >= 0
+    ind = max(0, base_total - rep - dem)
 
-    if my_bucket == current_bucket:
-        rep += growth // 2
-        dem += growth // 2
-        ind += max(1, growth // 10)
-    elif BASELINE_DRIFT:
-        rep += BASELINE_DRIFT
-        dem += BASELINE_DRIFT // 2
-        ind += max(0, BASELINE_DRIFT // 5)
+    # Small shuffle so totals don't always rep+dem>ind in same pattern
+    # (still deterministic within epoch)
+    if (base_seed % 3) == 0 and ind > 0:
+        shift = min(ind // 10, 500)
+        rep += shift; ind -= shift
+    elif (base_seed % 3) == 1 and ind > 0:
+        shift = min(ind // 10, 500)
+        dem += shift; ind -= shift
 
-    return max(rep, 0), max(dem, 0), max(ind, 0)
+    return max(rep,0), max(dem,0), max(ind,0)
 
-def simulated_cd_votes(did: str, k: int = 3) -> List[int]:
+def simulated_cd_votes_30s(did: str, k: int = 3) -> List[int]:
     """
-    Return k vote totals for district 'did' (for k candidates),
-    deterministic + bucketed live ticks.
+    District-level k-way totals. Fully re-randomized each EPOCH_SECONDS window.
     """
-    base_seed = seeded_rng_u32(did)
-    tick      = _tick_bucket_key()
-    current_bucket = tick % max(1, UPDATE_BUCKETS)
-    my_bucket      = district_bucket(did)
+    epoch = _epoch_key()
+    base_seed = seeded_rng_u32(f"{did}-{epoch}")
 
-    # Base turnout per district ~ 150k–900k
+    # Total turnout per epoch ~ 150k–900k
     base_total = 150_000 + (base_seed % 750_000)
-    # Split base_total among k with mild bias
-    shares = []
+
+    # Random Dirichlet-like shares from seeded slices
+    parts = []
     rem = base_total
     for i in range(k - 1):
-        slice_i = int((0.25 + ((base_seed >> (i*3)) % 40)/100.0) * (rem / (k - i)))
-        shares.append(max(1, slice_i))
+        slice_i = int((0.15 + ((base_seed >> (i*3)) % 60)/100.0) * (rem / (k - i)))
+        parts.append(max(1, slice_i))
         rem -= slice_i
-    shares.append(max(1, rem))
+    parts.append(max(1, rem))
 
-    # Growth per tick when selected
-    growth = 2000 + (base_seed % 4000)  # bigger jumps than counties
-    if my_bucket == current_bucket:
-        bump = growth
-    else:
-        bump = BASELINE_DRIFT
+    # Mild reordering per epoch for variety
+    if k >= 3 and (base_seed % 2):
+        parts[0], parts[1] = parts[1], parts[0]
 
-    # Distribute bump with small bias to first two
-    bumps = [int(bump*0.45), int(bump*0.45)] + [max(0, bump - int(bump*0.9))]
-    bumps = (bumps + [0]*k)[:k]
-
-    return [max(0, s + b) for s,b in zip(shares, bumps)]
+    return [max(0, x) for x in parts[:k]]
 
 # --------------------- Registries built at startup ---------------- #
-# counties: USPS → List[(FIPS, canonical_name, ap_name)]
+
 STATE_REGISTRY: Dict[str, List[Tuple[str,str,str]]] = {}
-# districts: USPS → List[(district_id, district_num, ap_label)]
 STATE_CD_REGISTRY: Dict[str, List[Tuple[str,int,str]]] = {}
 
 @app.on_event("startup")
 async def bootstrap():
+    # Counties
     async with httpx.AsyncClient(timeout=30) as client:
-        # Counties
         r = await client.get(US_ATLAS_COUNTIES_URL); r.raise_for_status()
         topo = r.json()
-        geoms = topo.get("objects", {}).get("counties", {}).get("geometries", [])
-        for g in geoms:
-            fips = str(g.get("id", "")).zfill(5)
-            props = g.get("properties", {}) or {}
-            name = props.get("name") or props.get("NAMELSAD") or fips
-            state_fips = fips[:2]
-            usps = STATE_FIPS_TO_USPS.get(state_fips)
-            if not usps: continue
-            canonical = re.sub(r"\s+(County|Parish|city)$", "", name)
-            apname = county_suffix(usps, canonical)
-            apname = apize_name(usps, apname)
-            STATE_REGISTRY.setdefault(usps, []).append((fips, canonical, apname))
-        for usps in STATE_REGISTRY:
-            STATE_REGISTRY[usps].sort(key=lambda t: t[0])
+    geoms = topo.get("objects", {}).get("counties", {}).get("geometries", [])
+    for g in geoms:
+        fips = str(g.get("id", "")).zfill(5)
+        props = g.get("properties", {}) or {}
+        name = props.get("name") or props.get("NAMELSAD") or fips
+        state_fips = fips[:2]
+        usps = STATE_FIPS_TO_USPS.get(state_fips)
+        if not usps:
+            continue
+        canonical = re.sub(r"\s+(County|Parish|city)$", "", name)
+        apname = county_suffix(usps, canonical)
+        apname = apize_name(usps, apname)
+        STATE_REGISTRY.setdefault(usps, []).append((fips, canonical, apname))
+    for usps in STATE_REGISTRY:
+        STATE_REGISTRY[usps].sort(key=lambda t: t[0])
 
-        # Congressional districts
-        # Congressional districts (use local 119th TopoJSON)
-        with open("cb_2024_us_cd119_500k.json", "r") as f:
-            cd_topo = json.load(f)
+    # Congressional districts (local TopoJSON file)
+    with open("cb_2024_us_cd119_500k.json", "r", encoding="utf-8") as f:
+        cd_topo = json.load(f)
 
-        cd_obj = (cd_topo.get("objects", {}).get("districts")
-            or cd_topo.get("objects", {}).get("congressional-districts")
-            or cd_topo.get("objects", {}).get(next(iter(cd_topo.get("objects", {})), ""), {}))
-        geoms_cd = cd_obj.get("geometries", []) if cd_obj else []
+    cd_obj = (cd_topo.get("objects", {}).get("districts")
+        or cd_topo.get("objects", {}).get("congressional-districts")
+        or cd_topo.get("objects", {}).get(next(iter(cd_topo.get("objects", {})), ""), {}))
+    geoms_cd = cd_obj.get("geometries", []) if cd_obj else []
 
-        for g in geoms_cd:
-            gid = str(g.get("id", "")).strip()
-            props = g.get("properties", {}) or {}
+    for g in geoms_cd:
+        gid = str(g.get("id", "")).strip()
+        props = g.get("properties", {}) or {}
 
-        # Use STATEFP from Census file, not "state"
-            m = re.match(r"^\s*(\d{2})", gid) or re.match(r"^\s*(\d{2})", str(props.get("STATEFP") or ""))
-            if not m:
-                continue
+        m = re.match(r"^\s*(\d{2})", gid) or re.match(r"^\s*(\d{2})", str(props.get("STATEFP") or ""))
+        if not m:
+            continue
+        state_fips = m.group(1)
+        usps = STATE_FIPS_TO_USPS.get(state_fips)
+        if not usps:
+            continue
 
-            state_fips = m.group(1)
-            usps = STATE_FIPS_TO_USPS.get(state_fips)
-            if not usps:
-                continue
+        dnum = None
+        for key in ("CD119FP","district","DISTRICT","cd","CD","number","NUM"):
+            if key in props and str(props[key]).strip().isdigit():
+                dnum = int(str(props[key]).strip())
+                break
+        if dnum is None:
+            tail = re.findall(r"(\d{1,2})$", gid.replace("-", ""))
+            dnum = int(tail[0]) if tail else 1
 
-            dnum = None
-            # Prefer Census field CD119FP for district number
-            for key in ("CD119FP","district","DISTRICT","cd","CD","number","NUM"):
-                if key in props and str(props[key]).strip().isdigit():
-                    dnum = int(str(props[key]).strip())
-                    break
+        label = district_label(dnum)
+        STATE_CD_REGISTRY.setdefault(usps, []).append((gid, dnum, label))
 
-            if dnum is None:
-                tail = re.findall(r"(\d{1,2})$", gid.replace("-", ""))
-                dnum = int(tail[0]) if tail else 1
-
-            label = district_label(dnum)
-            STATE_CD_REGISTRY.setdefault(usps, []).append((gid, dnum, label))
-
-        for usps in STATE_CD_REGISTRY:
-            STATE_CD_REGISTRY[usps].sort(key=lambda t: (t[1], t[0]))
-
-
-@app.get("/api/ping", response_class=PlainTextResponse)
-def ping():
-    return "pong"
+    for usps in STATE_CD_REGISTRY:
+        STATE_CD_REGISTRY[usps].sort(key=lambda t: (t[1], t[0]))
 
 # ---------------------------- Counties API ------------------------ #
+
 @app.get("/v2/elections/{date}")
 def elections_state_ru(
     request: Request,
@@ -313,13 +286,6 @@ def elections_state_ru(
     level: str = Query("ru"),
     officeId: str = Query("P", regex="^[PSG]$"),  # President/Senate/Governor
 ):
-    """
-    Simulated statewide (by-county) endpoint.
-    officeId:
-      P = President (fixed Trump/Harris/Kennedy)
-      S = U.S. Senate (generated names)
-      G = Governor (generated names)
-    """
     usps = statepostal.upper()
     officeId = (officeId or "P").upper()
     counties = STATE_REGISTRY.get(usps, [])
@@ -328,36 +294,31 @@ def elections_state_ru(
         xml = f'<ElectionResults Date="{date}" StatePostal="{usps}" Office="{officeId}"></ElectionResults>'
         return Response(content=xml, media_type="application/xml")
 
-    # Prepare the candidate slate (consistent across counties for the race)
     slate = gen_statewide_candidates(usps, officeId, n=3)
+    epoch = _epoch_key()
 
-    parts = [f'<ElectionResults Date="{date}" StatePostal="{usps}" Office="{officeId}">']
+    parts = [f'<ElectionResults Date="{date}" StatePostal="{usps}" Office="{officeId}" Epoch="{epoch}">']
     for fips, canonical, apname in counties:
-        v = simulated_votes(fips)
+        rep, dem, ind = simulated_votes_30s(fips)
         parts.append(f'  <ReportingUnit Name="{apname}" FIPS="{fips}">')
-        for (full, party), vv in zip(slate, v + (0,)):  # map first 3 vote buckets if present
+        for (full, party), vv in zip(slate, (rep, dem, ind)):
             first = full.split(" ", 1)[0]
             last  = full.split(" ", 1)[-1] if " " in full else ""
             parts.append(f'    <Candidate First="{first}" Last="{last}" Party="{party}" VoteCount="{vv}"/>')
         parts.append(  "  </ReportingUnit>")
     parts.append("</ElectionResults>")
-    xml = "\n".join(parts)
-    return Response(content=xml, media_type="application/xml")
+    return Response(content="\n".join(parts), media_type="application/xml")
 
 # ----------------------- Congressional Districts API -------------- #
+
 @app.get("/v2/districts/{date}")
 def districts_state_ru(
     request: Request,
     date: str,
     statepostal: str = Query(..., min_length=2, max_length=2),
     level: str = Query("ru"),
-    officeId: str = Query("H", regex="^[H]$"),  # House only here
+    officeId: str = Query("H", regex="^[H]$"),  # House only
 ):
-    """
-    Simulated congressional districts endpoint (House).
-    - Emits one <ReportingUnit> per district in the requested state.
-    - Each district has 3 generated candidates with parties (REP/DEM/IND).
-    """
     usps = statepostal.upper()
     districts = STATE_CD_REGISTRY.get(usps, [])
 
@@ -365,10 +326,11 @@ def districts_state_ru(
         xml = f'<ElectionResults Date="{date}" StatePostal="{usps}" Office="{officeId}"></ElectionResults>'
         return Response(content=xml, media_type="application/xml")
 
-    parts = [f'<ElectionResults Date="{date}" StatePostal="{usps}" Office="{officeId}">']
+    epoch = _epoch_key()
+    parts = [f'<ElectionResults Date="{date}" StatePostal="{usps}" Office="{officeId}" Epoch="{epoch}">']
     for did, dnum, label in districts:
         cand = gen_cd_candidates(did, n=3)
-        votes = simulated_cd_votes(did, k=len(cand))
+        votes = simulated_cd_votes_30s(did, k=len(cand))
         parts.append(f'  <ReportingUnit Name="{label}" DistrictId="{did}" District="{dnum}">')
         for (full, party), v in zip(cand, votes):
             first = full.split(" ", 1)[0]
@@ -376,22 +338,23 @@ def districts_state_ru(
             parts.append(f'    <Candidate First="{first}" Last="{last}" Party="{party}" VoteCount="{v}"/>')
         parts.append(  "  </ReportingUnit>")
     parts.append("</ElectionResults>")
-    xml = "\n".join(parts)
-    return Response(content=xml, media_type="application/xml")
+    return Response(content="\n".join(parts), media_type="application/xml")
 
-from fastapi.staticfiles import StaticFiles
+# ---------------------------- Static & Index ---------------------- #
 
-# mount /static for CSS/JS if needed
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# serve the dashboard at "/"
 @app.get("/", response_class=Response)
 def read_index():
-    with open("index.html", "r", encoding="utf-8") as f:
-        return Response(content=f.read(), media_type="text/html")
-
+    # Optional: serve a local index if present
+    try:
+        with open("index.html", "r", encoding="utf-8") as f:
+            return Response(content=f.read(), media_type="text/html")
+    except FileNotFoundError:
+        return Response(content="<h1>API is running</h1>", media_type="text/html")
 
 # ----------------------------- Local dev -------------------------- #
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "5022")))
