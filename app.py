@@ -1,39 +1,38 @@
-# app.py — AP Elections API simulator (randomizes every 30s)
+# app.py — AP Elections API simulator (randomizes every 30s) + MANUAL OVERRIDES
 #
-# Endpoints:
-#   - /api/ping
-#   - /metrics                         -> {"total_calls": ..., "calls_per_minute": ...}
-#   - /v2/elections/{date}?statepostal=XX&raceTypeId=G&raceId=0&level=ru&officeId=P|S|G
-#       -> county-level <ReportingUnit ...><Candidate .../></ReportingUnit>
-#   - /v2/districts/{date}?statepostal=XX&level=ru&officeId=H
-#       -> congressional-district <ReportingUnit ...><Candidate .../></ReportingUnit>
+# New:
+#   - In-memory (optional on-disk) overrides for county vote totals (REP/DEM/IND)
+#   - Registry endpoints for UI dropdowns:
+#       GET /registry/states                -> ["AL","AK",...]
+#       GET /registry/counties?state=XX     -> [{"fips":"06037","name":"Los Angeles County"}, ...]
+#   - Override endpoints:
+#       GET    /overrides                   -> current overrides
+#       POST   /override/county             -> {"fips":"06037","rep":1,"dem":2,"ind":3}
+#       DELETE /override/county?fips=06037  -> remove one county override
+#       DELETE /overrides                   -> clear all overrides
 #
-# Change vs original:
-#   - NEW: EPOCH_SECONDS (default 30). Every epoch all vote totals re-randomize.
-#   - Names/parties and XML structure unchanged. Metrics preserved.
+# Behavior:
+#   - If a county FIPS is overridden, /v2/elections/... uses that value
+#     instead of the randomized epoch value — across epochs.
 #
-# Run (dev):
-#   uvicorn app:app --reload --port 5022
+# Notes:
+#   - Set SAVE_OVERRIDES=1 to persist overrides to ./overrides.json
+#   - This keeps all existing routes and randomization logic intact.
 #
-# Env knobs:
-#   EPOCH_SECONDS=30   # how often a totally new dataset is produced
-#   UPDATE_BUCKETS=36  # kept for compatibility (not used for growth anymore)
-#   BASELINE_DRIFT=0   # kept for compatibility (not used)
-#   TICK_SECONDS=10    # kept for compatibility (not used)
-#
-# Requires cb_2024_us_cd119_500k.json present in working directory.
+# Base app (randomized epochs, endpoints) credit: your original file.
+# --------------------------------------------------------------------
 
 import os, time, re, hashlib, json
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 import httpx
 
-from fastapi import FastAPI, Query, Request
-from fastapi.responses import PlainTextResponse, Response
+from fastapi import FastAPI, Query, Request, HTTPException
+from fastapi.responses import PlainTextResponse, Response, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-# ---------------------------- App & Metrics ---------------------------- #
+app = FastAPI(title="AP Elections API Simulator (30s random epochs + overrides)")
 
-app = FastAPI(title="AP Elections API Simulator (30s random epochs)")
+# ---------------------------- Metrics ---------------------------- #
 
 from collections import deque
 TOTAL_CALLS = 0
@@ -61,10 +60,12 @@ def ping():
 
 # ---------------------------- Tunables ---------------------------- #
 
-UPDATE_BUCKETS  = int(os.getenv("UPDATE_BUCKETS", "36"))  # kept for compat
-BASELINE_DRIFT  = int(os.getenv("BASELINE_DRIFT", "0"))   # kept for compat
-TICK_SECONDS    = int(os.getenv("TICK_SECONDS", "10"))    # kept for compat
-EPOCH_SECONDS   = int(os.getenv("EPOCH_SECONDS", "30"))   # << NEW
+UPDATE_BUCKETS  = int(os.getenv("UPDATE_BUCKETS", "36"))  # compat
+BASELINE_DRIFT  = int(os.getenv("BASELINE_DRIFT", "0"))   # compat
+TICK_SECONDS    = int(os.getenv("TICK_SECONDS", "10"))    # compat
+EPOCH_SECONDS   = int(os.getenv("EPOCH_SECONDS", "30"))   # << still the epoch cadence
+SAVE_OVERRIDES  = os.getenv("SAVE_OVERRIDES", "0") in ("1","true","True","YES","yes")
+OVERRIDE_PATH   = os.getenv("OVERRIDE_PATH", "overrides.json")
 
 US_ATLAS_COUNTIES_URL = "https://cdn.jsdelivr.net/npm/us-atlas@3/counties-10m.json"
 
@@ -83,11 +84,11 @@ INDEPENDENT_CITY_STATES = {"VA"}
 # ----------------------- Helpers / RNG / Names -------------------- #
 
 def seeded_rng_u32(seed: str) -> int:
-    h = hashlib.blake2b(seed.encode("utf-8"), digest_size=4).digest()
+    import hashlib as _h
+    h = _h.blake2b(seed.encode("utf-8"), digest_size=4).digest()
     return int.from_bytes(h, "big")
 
 def _epoch_key() -> int:
-    # A new integer every EPOCH_SECONDS; used to fully randomize totals
     return int(time.time() // max(1, EPOCH_SECONDS))
 
 def apize_name(usps: str, canonical: str) -> str:
@@ -99,7 +100,7 @@ def apize_name(usps: str, canonical: str) -> str:
     return n
 
 def county_suffix(usps: str, name: str) -> str:
-    if name.lower().endswith("city"):       # Carson City NV, VA indep. cities, DC, etc.
+    if name.lower().endswith("city"):
         return name
     if usps in PARISH_STATES:
         return name if name.lower().endswith("parish") else f"{name} Parish"
@@ -128,7 +129,6 @@ def gen_cd_candidates(did: str, n: int = 3) -> List[Tuple[str,str]]:
         used.add(nm)
         party = PARTY_POOL[(base // (i+3)) % len(PARTY_POOL)] if i < 3 else "IND"
         out.append((nm, party))
-    # Ensure REP & DEM among top two
     names = [x for x in out]
     have = {p for _,p in names[:2]}
     if "REP" not in have: names[0] = (names[0][0], "REP")
@@ -158,45 +158,28 @@ def gen_statewide_candidates(usps: str, office: str, n: int = 3) -> List[Tuple[s
 # --------------------- Randomized vote models (30s) -------------------- #
 
 def simulated_votes_30s(fips: str) -> Tuple[int,int,int]:
-    """
-    County-level 3-way totals. Fully re-randomized each EPOCH_SECONDS window.
-    """
     epoch = _epoch_key()
     base_seed = seeded_rng_u32(f"{fips}-{epoch}")
     r1 = (base_seed & 0xFFFF)
     r2 = ((base_seed >> 16) & 0xFFFF)
 
-    # Random total per epoch: 2k–250k + jitter
     base_total = 2000 + (base_seed % 250000)
-
-    # Random split with mild bias; ensure non-negative
-    rep = int(base_total * (0.30 + (r1 % 40) / 100.0))  # 30–70%
-    dem = int(base_total * (0.20 + (r2 % 55) / 100.0))  # 20–75%
-    # Whatever remains goes to IND, but ensure >= 0
+    rep = int(base_total * (0.30 + (r1 % 40) / 100.0))
+    dem = int(base_total * (0.20 + (r2 % 55) / 100.0))
     ind = max(0, base_total - rep - dem)
 
-    # Small shuffle so totals don't always rep+dem>ind in same pattern
-    # (still deterministic within epoch)
     if (base_seed % 3) == 0 and ind > 0:
         shift = min(ind // 10, 500)
         rep += shift; ind -= shift
     elif (base_seed % 3) == 1 and ind > 0:
         shift = min(ind // 10, 500)
         dem += shift; ind -= shift
-
     return max(rep,0), max(dem,0), max(ind,0)
 
 def simulated_cd_votes_30s(did: str, k: int = 3) -> List[int]:
-    """
-    District-level k-way totals. Fully re-randomized each EPOCH_SECONDS window.
-    """
     epoch = _epoch_key()
     base_seed = seeded_rng_u32(f"{did}-{epoch}")
-
-    # Total turnout per epoch ~ 150k–900k
     base_total = 150_000 + (base_seed % 750_000)
-
-    # Random Dirichlet-like shares from seeded slices
     parts = []
     rem = base_total
     for i in range(k - 1):
@@ -204,11 +187,8 @@ def simulated_cd_votes_30s(did: str, k: int = 3) -> List[int]:
         parts.append(max(1, slice_i))
         rem -= slice_i
     parts.append(max(1, rem))
-
-    # Mild reordering per epoch for variety
     if k >= 3 and (base_seed % 2):
         parts[0], parts[1] = parts[1], parts[0]
-
     return [max(0, x) for x in parts[:k]]
 
 # --------------------- Registries built at startup ---------------- #
@@ -265,7 +245,8 @@ async def bootstrap():
                 dnum = int(str(props[key]).strip())
                 break
         if dnum is None:
-            tail = re.findall(r"(\d{1,2})$", gid.replace("-", ""))
+            import re as _re
+            tail = _re.findall(r"(\d{1,2})$", gid.replace("-", ""))
             dnum = int(tail[0]) if tail else 1
 
         label = district_label(dnum)
@@ -273,6 +254,98 @@ async def bootstrap():
 
     for usps in STATE_CD_REGISTRY:
         STATE_CD_REGISTRY[usps].sort(key=lambda t: (t[1], t[0]))
+
+    # Load any saved overrides at boot
+    _load_overrides()
+
+# ---------------------------- Overrides --------------------------- #
+
+# Structure:
+# OVERRIDES = {
+#   "counties": {
+#       "06037": {"REP":123, "DEM":456, "IND":78},
+#       ...
+#   }
+# }
+OVERRIDES: Dict[str, Dict[str, Dict[str, int]]] = {"counties": {}}
+
+def _save_overrides():
+    if not SAVE_OVERRIDES:
+        return
+    try:
+        with open(OVERRIDE_PATH, "w", encoding="utf-8") as f:
+            json.dump(OVERRIDES, f, indent=2, sort_keys=True)
+    except Exception as e:
+        print("[WARN] Failed to save overrides:", e)
+
+def _load_overrides():
+    global OVERRIDES
+    if not SAVE_OVERRIDES:
+        return
+    try:
+        if os.path.exists(OVERRIDE_PATH):
+            with open(OVERRIDE_PATH, "r", encoding="utf-8") as f:
+                OVERRIDES = json.load(f)
+        else:
+            OVERRIDES = {"counties": {}}
+    except Exception as e:
+        print("[WARN] Failed to load overrides:", e)
+        OVERRIDES = {"counties": {}}
+
+@app.get("/overrides")
+def get_overrides():
+    return OVERRIDES
+
+@app.post("/override/county")
+async def set_county_override(payload: dict):
+    """
+    Body: {"fips":"06037","rep":123,"dem":456,"ind":78}
+    """
+    fips = str(payload.get("fips") or "").zfill(5)
+    try:
+        rep = int(payload.get("rep"))
+        dem = int(payload.get("dem"))
+        ind = int(payload.get("ind"))
+    except Exception:
+        raise HTTPException(status_code=400, detail="rep/dem/ind must be integers")
+    if not fips.isdigit() or len(fips) != 5:
+        raise HTTPException(status_code=400, detail="invalid fips")
+    if rep < 0 or dem < 0 or ind < 0:
+        raise HTTPException(status_code=400, detail="votes must be non-negative")
+
+    OVERRIDES.setdefault("counties", {})[fips] = {"REP": rep, "DEM": dem, "IND": ind}
+    _save_overrides()
+    return {"ok": True, "fips": fips, "override": OVERRIDES["counties"][fips]}
+
+@app.delete("/override/county")
+def delete_county_override(fips: str):
+    fips = str(fips).zfill(5)
+    if fips in OVERRIDES.get("counties", {}):
+        OVERRIDES["counties"].pop(fips, None)
+        _save_overrides()
+        return {"ok": True, "removed": fips}
+    return {"ok": True, "removed": None}
+
+@app.delete("/overrides")
+def clear_overrides():
+    OVERRIDES["counties"].clear()
+    _save_overrides()
+    return {"ok": True}
+
+# --------------------------- Registries for UI -------------------- #
+
+@app.get("/registry/states")
+def list_states():
+    # Only states that actually have counties loaded
+    out = sorted(STATE_REGISTRY.keys())
+    return out
+
+@app.get("/registry/counties")
+def list_counties(state: str = Query(..., min_length=2, max_length=2)):
+    usps = state.upper()
+    rows = STATE_REGISTRY.get(usps, [])
+    # Return FIPS + AP name ("Foo County" / "Bar Parish")
+    return [{"fips": f, "name": ap} for (f, _canonical, ap) in rows]
 
 # ---------------------------- Counties API ------------------------ #
 
@@ -299,7 +372,14 @@ def elections_state_ru(
 
     parts = [f'<ElectionResults Date="{date}" StatePostal="{usps}" Office="{officeId}" Epoch="{epoch}">']
     for fips, canonical, apname in counties:
-        rep, dem, ind = simulated_votes_30s(fips)
+        # --- OVERRIDE HOOK ---
+        ovr = OVERRIDES.get("counties", {}).get(fips)
+        if ovr:
+            rep, dem, ind = ovr["REP"], ovr["DEM"], ovr["IND"]
+        else:
+            rep, dem, ind = simulated_votes_30s(fips)
+        # ---------------------
+
         parts.append(f'  <ReportingUnit Name="{apname}" FIPS="{fips}">')
         for (full, party), vv in zip(slate, (rep, dem, ind)):
             first = full.split(" ", 1)[0]
@@ -310,6 +390,7 @@ def elections_state_ru(
     return Response(content="\n".join(parts), media_type="application/xml")
 
 # ----------------------- Congressional Districts API -------------- #
+# (House left randomized; you can add a similar override dict for CDs if needed)
 
 @app.get("/v2/districts/{date}")
 def districts_state_ru(
@@ -346,7 +427,6 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.get("/", response_class=Response)
 def read_index():
-    # Optional: serve a local index if present
     try:
         with open("index.html", "r", encoding="utf-8") as f:
             return Response(content=f.read(), media_type="text/html")
