@@ -115,13 +115,11 @@ stateSel.onchange = async () => { await loadCounties(stateSel.value); };
 
 document.getElementById('applyBtn').onclick = async () => {
   const fips = countySel.value;
-  const rep = parseInt(repEl.value,10);
-  const dem = parseInt(demEl.value,10);
-  const ind = parseInt(indEl.value,10);
-  if([rep,dem,ind].some(v=>Number.isNaN(v) || v<0)){
-    msgEl.textContent = 'Please enter non-negative integers for REP/DEM/IND.';
-    return;
-  }
+  const rep = repEl.value;  // allow letters or numbers
+  const dem = demEl.value;
+  const ind = indEl.value;
+
+  // skip numeric validation — send raw strings to the API
   const res = await api('/override/county', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
