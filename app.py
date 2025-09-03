@@ -64,7 +64,7 @@ def ping():
 UPDATE_BUCKETS  = int(os.getenv("UPDATE_BUCKETS", "36"))  # kept for compat
 BASELINE_DRIFT  = int(os.getenv("BASELINE_DRIFT", "0"))   # kept for compat
 TICK_SECONDS    = int(os.getenv("TICK_SECONDS", "10"))    # kept for compat
-EPOCH_SECONDS   = int(os.getenv("EPOCH_SECONDS", "30"))   # << NEW
+EPOCH_SECONDS   = int(os.getenv("EPOCH_SECONDS", "10"))   # << NEW
 
 US_ATLAS_COUNTIES_URL = "https://cdn.jsdelivr.net/npm/us-atlas@3/counties-10m.json"
 
