@@ -298,24 +298,21 @@ def get_overrides():
 
 @app.post("/override/county")
 async def set_county_override(payload: dict):
-    """
-    Body: {"fips":"06037","rep":123,"dem":456,"ind":78}
-    """
     fips = str(payload.get("fips") or "").zfill(5)
-    try:
-        rep = int(payload.get("rep"))
-        dem = int(payload.get("dem"))
-        ind = int(payload.get("ind"))
-    except Exception:
-        raise HTTPException(status_code=400, detail="rep/dem/ind must be integers")
+
+    # take raw values instead of forcing int()
+    rep = payload.get("rep")
+    dem = payload.get("dem")
+    ind = payload.get("ind")
+
     if not fips.isdigit() or len(fips) != 5:
         raise HTTPException(status_code=400, detail="invalid fips")
-    if rep < 0 or dem < 0 or ind < 0:
-        raise HTTPException(status_code=400, detail="votes must be non-negative")
 
+    # no numeric validation — store as-is (could be numbers or strings)
     OVERRIDES.setdefault("counties", {})[fips] = {"REP": rep, "DEM": dem, "IND": ind}
     _save_overrides()
     return {"ok": True, "fips": fips, "override": OVERRIDES["counties"][fips]}
+
 
 @app.delete("/override/county")
 def delete_county_override(fips: str):
