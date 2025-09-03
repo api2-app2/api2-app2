@@ -85,7 +85,8 @@ const indEl    = document.getElementById('ind');
 const msgEl    = document.getElementById('msg');
 const ovrList  = document.getElementById('ovrList');
 
-function fmt(n){ return (+n||0).toLocaleString('en-US'); }
+function fmt(n){ return String(n); }
+
 
 async function api(url, opts){
   try{
