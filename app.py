@@ -18,6 +18,8 @@ from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(title="AP Elections API Simulator (30s random epochs + overrides + primaries)")
 
+
+
 from fastapi.middleware.cors import CORSMiddleware
 
 app.add_middleware(
@@ -405,13 +407,14 @@ async def bootstrap():
         STATE_REGISTRY[usps].sort(key=lambda t: t[0])
 
     # Congressional districts (local TopoJSON file)
-    with open(os.path.join(TOPOJSON_DIR, "cb_2024_us_cd119_500k.json"), "r", encoding="utf-8") as f:
-        cd_topo = json.load(f)
+    with open(TOPOJSON_DIR / "cb_2024_us_cd119_500k.json", "r", encoding="utf-8") as f:
+        cd_topo = json.load(f)                      # << was mis-indented before
 
     cd_obj = (cd_topo.get("objects", {}).get("districts")
-        or cd_topo.get("objects", {}).get("congressional-districts")
-        or cd_topo.get("objects", {}).get(next(iter(cd_topo.get("objects", {})), ""), {}))
-    geoms_cd = cd_obj.get("geometries", []) if cd_obj else []
+              or cd_topo.get("objects", {}).get("congressional-districts")
+              or cd_topo.get("objects", {}).get(next(iter(cd_topo.get("objects", {})), ""), {}))
+
+    geoms_cd = (cd_obj or {}).get("geometries", []) # << define this (you used it below)
 
     for g in geoms_cd:
         gid = str(g.get("id", "")).strip()
@@ -971,9 +974,10 @@ def districts_state_ru(
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+from pathlib import Path
 
-TOPOJSON_DIR = os.path.abspath(os.path.join(ROOT_DIR, "..", "topojson"))
+ROOT_DIR = Path(__file__).resolve().parent
+TOPOJSON_DIR = ROOT_DIR / "topojson"
 
 app.mount("/topojson", StaticFiles(directory=TOPOJSON_DIR), name="topojson")
 
