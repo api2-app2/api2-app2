@@ -1,0 +1,889 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Sun / Wall / Dual Blinds (Azimuth Diagram)</title>
+  <style>
+    :root{
+      --bg:#0b1220;
+      --ink:#e7f6f5;
+      --muted:#a9dada;
+      --grid:rgba(255,255,255,.06);
+      --accent:#22c55e;
+      --accent2:#60a5fa;
+      --danger:#ef4444;
+      --shadow: 0 10px 30px rgba(0,0,0,.35);
+      --radius: 16px;
+    }
+    *{ box-sizing:border-box; }
+    body{
+      margin:0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+      background: radial-gradient(1200px 700px at 20% 10%, #10264f 0%, var(--bg) 55%);
+      color:var(--ink);
+    }
+    .wrap{
+      max-width: 1150px;
+      margin: 24px auto;
+      padding: 0 16px 28px;
+      display:grid;
+      gap:16px;
+      grid-template-columns: 420px 1fr;
+    }
+    .card{
+      background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
+      border: 1px solid rgba(255,255,255,.10);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow:hidden;
+    }
+    .card h2{
+      margin:0;
+      padding:14px 16px;
+      font-size: 14px;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+      color: rgba(231,246,245,.9);
+      border-bottom: 1px solid rgba(255,255,255,.08);
+      background: rgba(0,0,0,.10);
+    }
+    .controls{
+      padding: 14px 16px 16px;
+      display:flex;
+      flex-direction:column;
+      gap:14px;
+    }
+    .row{ display:flex; flex-direction:column; gap:8px; }
+    label{
+      font-size: 12px;
+      color: rgba(231,246,245,.85);
+      display:flex;
+      justify-content:space-between;
+      align-items:baseline;
+      gap:10px;
+    }
+    .val{ font-variant-numeric: tabular-nums; color: rgba(231,246,245,.95); }
+    input[type="range"]{ width:100%; accent-color: var(--accent); }
+    input[type="number"], select{
+      width: 160px;
+      padding: 8px 10px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,.12);
+      background: rgba(0,0,0,.18);
+      color: var(--ink);
+      outline:none;
+    }
+    select{ width: 100%; }
+    .grid2{ display:grid; grid-template-columns: 1fr auto; gap:10px; align-items:center; }
+    .grid2wide{ display:grid; grid-template-columns: 1fr; gap:10px; align-items:center; }
+    .btnRow{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    button{
+      appearance:none;
+      border: 1px solid rgba(255,255,255,.14);
+      background: rgba(0,0,0,.18);
+      color: var(--ink);
+      padding: 10px 12px;
+      border-radius: 12px;
+      cursor:pointer;
+      font-weight:600;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.03);
+    }
+    button:hover{ border-color: rgba(255,255,255,.22); }
+    button.primary{
+      background: linear-gradient(180deg, rgba(34,197,94,.20), rgba(34,197,94,.10));
+      border-color: rgba(34,197,94,.35);
+    }
+    button.danger{
+      background: linear-gradient(180deg, rgba(239,68,68,.20), rgba(239,68,68,.10));
+      border-color: rgba(239,68,68,.35);
+    }
+    .pill{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,.12);
+      background: rgba(0,0,0,.16);
+      font-size: 12px;
+      color: rgba(231,246,245,.90);
+    }
+    .dot{
+      width:10px;height:10px;border-radius:999px;background: var(--accent);
+      box-shadow: 0 0 0 3px rgba(34,197,94,.16);
+    }
+    .dot.off{ background: rgba(231,246,245,.35); box-shadow:none; }
+    .hint{
+      color: rgba(169,218,218,.9);
+      font-size: 12px;
+      line-height:1.35;
+      padding: 0 16px 16px;
+    }
+    .equation{
+      margin-top: 6px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,.12);
+      background: rgba(0,0,0,.16);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace;
+      font-size: 12px;
+      line-height:1.45;
+      color: rgba(231,246,245,.92);
+    }
+    .equation .k{ color: rgba(96,165,250,.95); }
+    .equation .g{ color: rgba(34,197,94,.95); }
+    .equation .m{ color: rgba(169,218,218,.95); }
+
+    .tableWrap{
+      border: 1px solid rgba(255,255,255,.12);
+      background: rgba(0,0,0,.14);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+    .tableScroll{ max-height: 300px; overflow: auto; }
+    table{
+      width: 100%;
+      border-collapse: collapse;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace;
+      font-size: 12px;
+      color: rgba(231,246,245,.92);
+    }
+    thead th{
+      position: sticky;
+      top: 0;
+      background: rgba(0,0,0,.35);
+      backdrop-filter: blur(6px);
+      border-bottom: 1px solid rgba(255,255,255,.12);
+      padding: 10px 8px;
+      text-align: right;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    thead th:first-child, tbody td:first-child{ text-align: left; }
+    tbody td{
+      padding: 8px 8px;
+      border-bottom: 1px solid rgba(255,255,255,.06);
+      text-align: right;
+      white-space: nowrap;
+    }
+    tbody tr:hover td{ background: rgba(255,255,255,.04); }
+    tbody tr.active td{
+      background: rgba(34,197,94,.14);
+      border-bottom-color: rgba(34,197,94,.25);
+    }
+
+    .diagram{ position:relative; padding: 16px; }
+    canvas{
+      width:100%;
+      height: 560px;
+      display:block;
+      border-radius: 14px;
+      background:
+        linear-gradient(transparent 0, transparent 23px, var(--grid) 24px),
+        linear-gradient(90deg, transparent 0, transparent 23px, var(--grid) 24px),
+        radial-gradient(1200px 900px at 40% 10%, rgba(96,165,250,.12) 0%, rgba(34,197,94,.06) 38%, rgba(0,0,0,0) 70%),
+        rgba(0,0,0,.16);
+      background-size: 24px 24px, 24px 24px, auto, auto;
+      border: 1px solid rgba(255,255,255,.10);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.03);
+    }
+    .legend{
+      margin-top: 12px;
+      display:flex;
+      flex-wrap:wrap;
+      gap:10px 14px;
+      font-size: 12px;
+      color: rgba(231,246,245,.85);
+    }
+    .key{ display:flex; align-items:center; gap:8px; white-space:nowrap; }
+    .swatch{
+      width: 12px; height: 12px; border-radius: 999px;
+      border: 1px solid rgba(255,255,255,.18);
+      background: rgba(255,255,255,.10);
+    }
+    .sw-sun{ background: #fbbf24; }
+    .sw-wall{ background: rgba(231,246,245,.9); }
+    .sw-normal{ background: #60a5fa; }
+    .sw-blind{ background: #22c55e; }
+    .sw-rays{ background: #ef4444; }
+
+    @media (max-width: 980px){
+      .wrap{ grid-template-columns: 1fr; }
+      canvas{ height: 520px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h2>Controls</h2>
+      <div class="controls">
+        <div class="row">
+          <label>
+            Sun azimuth (°) <span class="val" id="sunAzVal">114</span>
+          </label>
+          <input id="sunAz" type="range" min="0" max="359" step="0.01" value="114" />
+        </div>
+
+        <div class="row">
+          <label>
+            Wall normal azimuth (°) <span class="val" id="wallNormalAzVal">147</span>
+          </label>
+          <div class="grid2">
+            <input id="wallNormalAz" type="range" min="0" max="359" value="147" />
+            <input id="wallNormalAzNum" type="number" min="0" max="359" value="147" />
+          </div>
+        </div>
+
+        <div class="row">
+          <label>
+            Tracking offset magnitude (%) <span class="val" id="offsetVal">0</span>
+          </label>
+          <div class="grid2">
+            <input id="offsetPct" type="range" min="0" max="50" step="0.1" value="0" />
+            <input id="offsetPctNum" type="number" min="0" max="50" step="0.1" value="0" />
+          </div>
+        </div>
+
+        <div class="row">
+          <label>
+            Offset smoothing width (deg) <span class="val" id="widthVal">10</span>
+          </label>
+          <div class="grid2">
+            <input id="smoothWidth" type="range" min="0" max="60" step="0.5" value="10" />
+            <input id="smoothWidthNum" type="number" min="0" max="60" step="0.5" value="10" />
+          </div>
+        </div>
+
+        <div class="row">
+          <label>
+            Edge buffer (%) <span class="val" id="edgeVal">10</span>
+          </label>
+          <div class="grid2">
+            <input id="edge" type="range" min="0" max="49" step="0.5" value="10" />
+            <input id="edgeNum" type="number" min="0" max="49" step="0.5" value="10" />
+          </div>
+          <div class="hint" style="padding:0; margin-top:2px;">
+            Python enforces: <b>%closed ∈ [edge, 100-edge]</b>. Example edge=10 → [10, 90].
+          </div>
+        </div>
+
+        <div class="row">
+          <label>
+            Tracking mode (blinds follow sun) <span class="val" id="trackVal">On</span>
+          </label>
+          <div class="btnRow">
+            <button id="toggleTrack" class="primary">Tracking: ON</button>
+            <span class="pill"><span id="trackDot" class="dot"></span><span id="trackText">Python drives %</span></span>
+          </div>
+        </div>
+
+        <div class="row">
+          <label>
+            Sun animation rate (deg/sec) <span class="val" id="rateVal">24</span>
+          </label>
+          <div class="grid2wide">
+            <select id="rate">
+              <option value="1">1</option>
+              <option value="24" selected>24</option>
+              <option value="60">60</option>
+              <option value="240">240</option>
+              <option value="1000">1000</option>
+            </select>
+          </div>
+          <div class="btnRow">
+            <button id="play" class="primary">▶ Play</button>
+            <button id="pause">⏸ Pause</button>
+            <button id="reset" class="danger">↺ Reset (114°)</button>
+          </div>
+        </div>
+
+        <div class="row">
+          <label>
+            Manual blinds closed (%) <span class="val" id="blindPctVal">35</span>
+          </label>
+          <input id="blindPct" type="range" min="0" max="100" value="35" />
+          <div class="hint" style="padding:0; margin-top:2px;">
+            Used only when Tracking is OFF.
+          </div>
+        </div>
+
+        <div class="row">
+          <label>
+            Blind gap (px) <span class="val" id="gapVal">105</span>
+          </label>
+          <input id="gap" type="range" min="10" max="200" value="105" />
+        </div>
+
+        <div class="row">
+          <label>
+            Sun radius (px) <span class="val" id="sunRadiusVal">210</span>
+          </label>
+          <input id="sunRadius" type="range" min="120" max="260" value="210" />
+        </div>
+
+        <div class="row">
+          <label>
+            Blind length (px) <span class="val" id="blindLenVal">110</span>
+          </label>
+          <input id="blindLen" type="range" min="60" max="170" value="110" />
+        </div>
+
+        <div class="row">
+          <label>
+            Show rays <span class="val" id="raysVal">On</span>
+          </label>
+          <input id="showRays" type="range" min="0" max="1" value="1" />
+        </div>
+
+        <div class="row">
+          <label>Equation readout</label>
+          <div class="equation" id="eqBox"></div>
+        </div>
+
+        <div class="row">
+          <label>
+            Readout table for all sun azimuths (0–359)
+            <span class="val" id="tableMeta">—</span>
+          </label>
+
+          <div class="tableWrap">
+            <div class="tableScroll" id="tableScroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>sunAz</th>
+                    <th>base%</th>
+                    <th>off%</th>
+                    <th>pre%</th>
+                    <th>final%</th>
+                    <th>wallDir</th>
+                    <th>blindDir</th>
+                    <th>blindNorm1</th>
+                    <th>blindNorm2</th>
+                    <th>err°</th>
+                  </tr>
+                </thead>
+                <tbody id="readoutBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="hint">
+        <b>Angles:</b> 0°=E, 90°=N, 180°=W, 270°=S.
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Diagram (top-down / plan view)</h2>
+      <div class="diagram">
+        <canvas id="c" width="900" height="560"></canvas>
+        <div class="legend">
+          <div class="key"><span class="swatch sw-sun"></span>Sun</div>
+          <div class="key"><span class="swatch sw-wall"></span>Wall</div>
+          <div class="key"><span class="swatch sw-normal"></span>Wall normal</div>
+          <div class="key"><span class="swatch sw-blind"></span>Blinds (two)</div>
+          <div class="key"><span class="swatch sw-rays"></span>Rays</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+    const mod360 = (d) => ((d % 360) + 360) % 360;
+    const deg2rad = (d) => (d * Math.PI) / 180;
+
+    function azToVec(azDeg){
+      const r = deg2rad(azDeg);
+      // North-up: 0°=North (up), 90°=East (right)
+      return { x: Math.sin(r), y: Math.cos(r) };
+    }
+    function angDiff(a, b){
+      let d = mod360(a - b);
+      if (d >= 180) d -= 360;
+      return d; // [-180,180)
+    }
+
+    // Python tables
+    let finalTable = null; // FINAL (after symmetric edge clamp)
+    let baseTable  = null;
+    let offTable   = null;
+    let preTable   = null;
+    let minAllowed = 10.0;
+    let maxAllowed = 90.0;
+
+    async function fetchTables(wallNormalAz, offsetPct, smoothWidth, edge){
+      const url =
+        `/api/table?wall=${encodeURIComponent(wallNormalAz)}` +
+        `&offset=${encodeURIComponent(offsetPct)}` +
+        `&width=${encodeURIComponent(smoothWidth)}` +
+        `&edge=${encodeURIComponent(edge)}`;
+
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) throw new Error(`Failed /api/table: ${res.status}`);
+      const data = await res.json();
+
+      finalTable = data.table;
+      baseTable  = data.base_table;
+      offTable   = data.offset_applied;
+      preTable   = data.pre_table;
+      minAllowed = data.min_allowed;
+      maxAllowed = data.max_allowed;
+    }
+
+    function lerpFromTable(tbl, sunAzFloat){
+      if (!tbl || tbl.length !== 360) return 0.0;
+      const a = mod360(sunAzFloat);
+      const i0 = Math.floor(a) % 360;
+      const i1 = (i0 + 1) % 360;
+      const t  = a - Math.floor(a);
+      const v0 = tbl[i0];
+      const v1 = tbl[i1];
+      return v0 + (v1 - v0) * t;
+    }
+
+    function computeAnglesFromPct(pct, wallNormalAz){
+      const wallDirAz = mod360(wallNormalAz + 90);
+      const blindDirAz = mod360(wallDirAz + (pct/100)*180);
+      const n1 = mod360(blindDirAz + 90);
+      const n2 = mod360(blindDirAz + 270);
+      return { wallDirAz, blindDirAz, blindNorm1Az: n1, blindNorm2Az: n2 };
+    }
+
+    const els = {
+      c: document.getElementById("c"),
+      sunAz: document.getElementById("sunAz"),
+      wallNormalAz: document.getElementById("wallNormalAz"),
+      wallNormalAzNum: document.getElementById("wallNormalAzNum"),
+      offsetPct: document.getElementById("offsetPct"),
+      offsetPctNum: document.getElementById("offsetPctNum"),
+      smoothWidth: document.getElementById("smoothWidth"),
+      smoothWidthNum: document.getElementById("smoothWidthNum"),
+      edge: document.getElementById("edge"),
+      edgeNum: document.getElementById("edgeNum"),
+      blindPct: document.getElementById("blindPct"),
+      gap: document.getElementById("gap"),
+      sunRadius: document.getElementById("sunRadius"),
+      blindLen: document.getElementById("blindLen"),
+      showRays: document.getElementById("showRays"),
+      rate: document.getElementById("rate"),
+      play: document.getElementById("play"),
+      pause: document.getElementById("pause"),
+      reset: document.getElementById("reset"),
+      toggleTrack: document.getElementById("toggleTrack"),
+      sunAzVal: document.getElementById("sunAzVal"),
+      wallNormalAzVal: document.getElementById("wallNormalAzVal"),
+      offsetVal: document.getElementById("offsetVal"),
+      widthVal: document.getElementById("widthVal"),
+      edgeVal: document.getElementById("edgeVal"),
+      blindPctVal: document.getElementById("blindPctVal"),
+      gapVal: document.getElementById("gapVal"),
+      sunRadiusVal: document.getElementById("sunRadiusVal"),
+      blindLenVal: document.getElementById("blindLenVal"),
+      raysVal: document.getElementById("raysVal"),
+      rateVal: document.getElementById("rateVal"),
+      trackVal: document.getElementById("trackVal"),
+      trackDot: document.getElementById("trackDot"),
+      trackText: document.getElementById("trackText"),
+      eqBox: document.getElementById("eqBox"),
+      readoutBody: document.getElementById("readoutBody"),
+      tableScroll: document.getElementById("tableScroll"),
+      tableMeta: document.getElementById("tableMeta"),
+    };
+
+    function syncWallNormalFromSlider(){ els.wallNormalAzNum.value = els.wallNormalAz.value; }
+    function syncWallNormalFromNum(){
+      const v = clamp(parseInt(els.wallNormalAzNum.value || "0", 10), 0, 359);
+      els.wallNormalAzNum.value = v;
+      els.wallNormalAz.value = v;
+    }
+    function syncOffsetFromSlider(){ els.offsetPctNum.value = els.offsetPct.value; }
+    function syncOffsetFromNum(){
+      const v = clamp(parseFloat(els.offsetPctNum.value || "0"), 0, 50);
+      els.offsetPctNum.value = v;
+      els.offsetPct.value = v;
+    }
+    function syncWidthFromSlider(){ els.smoothWidthNum.value = els.smoothWidth.value; }
+    function syncWidthFromNum(){
+      const v = clamp(parseFloat(els.smoothWidthNum.value || "0"), 0, 60);
+      els.smoothWidthNum.value = v;
+      els.smoothWidth.value = v;
+    }
+    function syncEdgeFromSlider(){ els.edgeNum.value = els.edge.value; }
+    function syncEdgeFromNum(){
+      const v = clamp(parseFloat(els.edgeNum.value || "0"), 0, 49);
+      els.edgeNum.value = v;
+      els.edge.value = v;
+    }
+
+    let playing = false;
+    let tracking = true;
+    let lastT = performance.now();
+
+    let rowByAz = new Map();
+    let activeAz = null;
+
+    function setActiveRow(azInt){
+      azInt = mod360(azInt);
+      if (activeAz === azInt) return;
+      const prev = rowByAz.get(activeAz);
+      if (prev) prev.classList.remove("active");
+      const next = rowByAz.get(azInt);
+      if (next) next.classList.add("active");
+      activeAz = azInt;
+    }
+
+    function buildReadoutTable(){
+      const wallNormalAz = parseFloat(els.wallNormalAz.value);
+      const wallDirAz = mod360(wallNormalAz + 90);
+
+      rowByAz.clear();
+      els.readoutBody.innerHTML = "";
+      const frag = document.createDocumentFragment();
+
+      for (let sunAz = 0; sunAz < 360; sunAz++){
+        const pctFinal = finalTable ? finalTable[sunAz] : 0.0;
+        const pctBase  = baseTable  ? baseTable[sunAz]  : 0.0;
+        const off      = offTable   ? offTable[sunAz]   : 0.0;
+        const pre      = preTable   ? preTable[sunAz]   : 0.0;
+
+        const { blindDirAz, blindNorm1Az, blindNorm2Az } = computeAnglesFromPct(pctFinal, wallNormalAz);
+        const err = Math.min(
+          Math.abs(angDiff(blindNorm1Az, sunAz)),
+          Math.abs(angDiff(blindNorm2Az, sunAz))
+        );
+
+        const tr = document.createElement("tr");
+        tr.dataset.az = String(sunAz);
+        tr.addEventListener("click", () => {
+          playing = false;
+          els.sunAz.value = sunAz;
+          updateLabelsAndEquation();
+          requestDraw();
+        });
+
+        tr.innerHTML = `
+          <td style="text-align:left;">${sunAz}</td>
+          <td>${pctBase.toFixed(2)}</td>
+          <td>${off.toFixed(2)}</td>
+          <td>${pre.toFixed(2)}</td>
+          <td>${pctFinal.toFixed(2)}</td>
+          <td>${wallDirAz.toFixed(0)}</td>
+          <td>${blindDirAz.toFixed(2)}</td>
+          <td>${blindNorm1Az.toFixed(2)}</td>
+          <td>${blindNorm2Az.toFixed(2)}</td>
+          <td>${err.toFixed(2)}</td>
+        `;
+
+        rowByAz.set(sunAz, tr);
+        frag.appendChild(tr);
+      }
+
+      els.readoutBody.appendChild(frag);
+
+      const offMag = parseFloat(els.offsetPct.value);
+      const w = parseFloat(els.smoothWidth.value);
+      const edge = parseFloat(els.edge.value);
+
+      els.tableMeta.textContent =
+        `Python clamp: [${minAllowed.toFixed(1)}, ${maxAllowed.toFixed(1)}] (edge=${edge.toFixed(1)}%) | offset=${offMag.toFixed(1)}% | width=${w.toFixed(1)}°`;
+
+      setActiveRow(Math.round(parseFloat(els.sunAz.value)));
+    }
+
+    function updateTrackUI(){
+      els.trackVal.textContent = tracking ? "On" : "Off";
+      els.toggleTrack.textContent = tracking ? "Tracking: ON" : "Tracking: OFF";
+      els.toggleTrack.classList.toggle("danger", !tracking);
+      els.toggleTrack.classList.toggle("primary", tracking);
+      els.trackDot.classList.toggle("off", !tracking);
+      els.trackText.textContent = tracking ? "Python drives % (with symmetric edge clamp)" : "manual blinds %";
+      els.blindPct.disabled = tracking;
+      els.blindPct.style.opacity = tracking ? 0.55 : 1.0;
+    }
+
+    function updateLabelsAndEquation(){
+      const sunAz = parseFloat(els.sunAz.value);
+      const wallNormalAz = parseFloat(els.wallNormalAz.value);
+      const offMag = parseFloat(els.offsetPct.value);
+      const w = parseFloat(els.smoothWidth.value);
+      const edge = parseFloat(els.edge.value);
+
+      els.sunAzVal.textContent = sunAz.toFixed(0);
+      els.wallNormalAzVal.textContent = wallNormalAz.toFixed(0);
+      els.offsetVal.textContent = offMag.toFixed(1);
+      els.widthVal.textContent = w.toFixed(1);
+      els.edgeVal.textContent = edge.toFixed(1);
+
+      els.gapVal.textContent = els.gap.value;
+      els.sunRadiusVal.textContent = els.sunRadius.value;
+      els.blindLenVal.textContent = els.blindLen.value;
+      els.raysVal.textContent = (els.showRays.value === "1") ? "On" : "Off";
+      els.rateVal.textContent = els.rate.value;
+
+      const pctFinal = lerpFromTable(finalTable, sunAz);
+      const pctBase  = lerpFromTable(baseTable,  sunAz);
+      const offApplied = lerpFromTable(offTable, sunAz);
+      const pre = lerpFromTable(preTable, sunAz);
+
+      const pctShown = tracking ? pctFinal : parseFloat(els.blindPct.value);
+      els.blindPctVal.textContent = pctShown.toFixed(1);
+
+      els.eqBox.innerHTML = `
+        <span class="m">All logic in Python</span><br/>
+        <span class="k">pctBase</span> = base_tracking(sunAz, wallNormal)<br/>
+        <span class="k">offApplied</span> = offMag * tanh(diff/widthDeg)<br/>
+        <span class="k">pctPre</span> = clamp(pctBase + offApplied, 0..100)<br/>
+        <span class="g">pctFinal</span> = clamp(pctPre, edge, 100-edge)<br/><br/>
+        <small style="color:rgba(169,218,218,.95)">
+          Current: base=${pctBase.toFixed(2)}%, off=${offApplied.toFixed(2)}%, pre=${pre.toFixed(2)}%, final=${pctFinal.toFixed(2)}% (allowed [${minAllowed.toFixed(1)}, ${maxAllowed.toFixed(1)}])
+        </small>
+      `.trim();
+
+      setActiveRow(Math.round(sunAz));
+    }
+
+    const ctx = els.c.getContext("2d");
+    function resizeCanvasToCSS(){
+      const rect = els.c.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const w = Math.round(rect.width * dpr);
+      const h = Math.round(rect.height * dpr);
+      if (els.c.width !== w || els.c.height !== h){
+        els.c.width = w; els.c.height = h;
+      }
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+    }
+
+    function drawArrow(ctx, x, y, dx, dy, len, color, width=3){
+      const ex = x + dx * len;
+      const ey = y - dy * len;
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(ex, ey);
+      ctx.stroke();
+      const ang = Math.atan2((y - ey), (ex - x));
+      const head = 12;
+      ctx.beginPath();
+      ctx.moveTo(ex, ey);
+      ctx.lineTo(ex - head * Math.cos(ang - Math.PI/7), ey - head * Math.sin(ang - Math.PI/7));
+      ctx.lineTo(ex - head * Math.cos(ang + Math.PI/7), ey - head * Math.sin(ang + Math.PI/7));
+      ctx.closePath();
+      ctx.fillStyle = color;
+      ctx.fill();
+      ctx.restore();
+    }
+    function drawLine(ctx, x1, y1, x2, y2, color, width=4, alpha=1){
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+      ctx.restore();
+    }
+    function drawCircle(ctx, x, y, r, stroke, width=2, alpha=1){
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI*2);
+      ctx.stroke();
+      ctx.restore();
+    }
+    function fillCircle(ctx, x, y, r, fill, alpha=1){
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = fill;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI*2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    function drawScene(dtSec){
+      resizeCanvasToCSS();
+      const W = els.c.getBoundingClientRect().width;
+      const H = els.c.getBoundingClientRect().height;
+      ctx.clearRect(0,0,W,H);
+
+      const cx = W * 0.52;
+      const cy = H * 0.52;
+
+      if (playing){
+        const rate = parseFloat(els.rate.value);
+        const sunAzNow = parseFloat(els.sunAz.value);
+        els.sunAz.value = mod360(sunAzNow + rate * dtSec);
+      }
+
+      const sunAz = parseFloat(els.sunAz.value);
+      const wallNormalAz = parseFloat(els.wallNormalAz.value);
+      const gap = parseFloat(els.gap.value);
+      const sunR = parseFloat(els.sunRadius.value);
+      const blindLen = parseFloat(els.blindLen.value);
+      const showRays = (els.showRays.value === "1");
+
+      const n = azToVec(wallNormalAz);
+      const wallDirAz = mod360(wallNormalAz + 90);
+      const wdir = azToVec(wallDirAz);
+
+      const pctFinal = lerpFromTable(finalTable, sunAz);
+      const pctUsed = tracking ? pctFinal : parseFloat(els.blindPct.value);
+      if (tracking) els.blindPct.value = pctUsed;
+
+      const blindDirAz = mod360(wallDirAz + (pctUsed/100)*180);
+      const bdir = azToVec(blindDirAz);
+
+      const wallHalf = Math.min(W,H) * 0.26;
+
+      const center = { x: cx, y: cy };
+      function mathToCanvas(mx, my){ return { x: center.x + mx, y: center.y - my }; }
+
+      const wall1m = { x: -wdir.x * wallHalf, y: -wdir.y * wallHalf };
+      const wall2m = { x:  wdir.x * wallHalf, y:  wdir.y * wallHalf };
+      const wall1 = mathToCanvas(wall1m.x, wall1m.y);
+      const wall2 = mathToCanvas(wall2m.x, wall2m.y);
+
+      const svec = azToVec(sunAz);
+      const sunm = { x: svec.x * sunR, y: svec.y * sunR };
+      const sun = mathToCanvas(sunm.x, sunm.y);
+
+      drawCircle(ctx, center.x, center.y, sunR, "rgba(231,246,245,.18)", 2, 1);
+      drawLine(ctx, wall1.x, wall1.y, wall2.x, wall2.y, "rgba(231,246,245,.92)", 6, 1);
+      drawArrow(ctx, center.x, center.y, n.x, n.y, 110, "rgba(96,165,250,.95)", 3);
+
+      const offset1m = { x: -wdir.x * (gap/2), y: -wdir.y * (gap/2) };
+      const offset2m = { x:  wdir.x * (gap/2), y:  wdir.y * (gap/2) };
+      const b1 = mathToCanvas(offset1m.x, offset1m.y);
+      const b2 = mathToCanvas(offset2m.x, offset2m.y);
+
+      function drawBlind(anchor, label){
+        const half = blindLen/2;
+        const amx = anchor.x - center.x;
+        const amy = center.y - anchor.y;
+
+        const p1m = { x: amx - bdir.x * half, y: amy - bdir.y * half };
+        const p2m = { x: amx + bdir.x * half, y: amy + bdir.y * half };
+        const p1 = mathToCanvas(p1m.x, p1m.y);
+        const p2 = mathToCanvas(p2m.x, p2m.y);
+
+        drawLine(ctx, p1.x, p1.y, p2.x, p2.y, "rgba(34,197,94,.95)", 7, 1);
+        fillCircle(ctx, p1.x, p1.y, 4, "rgba(34,197,94,.95)", 1);
+        fillCircle(ctx, p2.x, p2.y, 4, "rgba(34,197,94,.95)", 1);
+
+        const n1 = mod360(blindDirAz + 90);
+        const n2 = mod360(blindDirAz + 270);
+        const blindNormalAz =
+          (Math.abs(angDiff(n1, sunAz)) <= Math.abs(angDiff(n2, sunAz))) ? n1 : n2;
+        const bn = azToVec(blindNormalAz);
+        drawArrow(ctx, anchor.x, anchor.y, bn.x, bn.y, 44, "rgba(96,165,250,.65)", 2);
+
+        ctx.save();
+        ctx.font = "12px ui-sans-serif, system-ui";
+        ctx.fillStyle = "rgba(231,246,245,.80)";
+        ctx.fillText(label, anchor.x + 10, anchor.y - 10);
+        ctx.restore();
+      }
+
+      drawBlind(b1, "Blind A");
+      drawBlind(b2, "Blind B");
+
+      fillCircle(ctx, sun.x, sun.y, 10, "rgba(251,191,36,.98)", 1);
+      drawCircle(ctx, sun.x, sun.y, 16, "rgba(251,191,36,.28)", 2, 1);
+
+      if (showRays){
+        drawLine(ctx, sun.x, sun.y, center.x, center.y, "rgba(239,68,68,.85)", 2, 1);
+        drawLine(ctx, sun.x, sun.y, b1.x, b1.y, "rgba(239,68,68,.55)", 2, 1);
+        drawLine(ctx, sun.x, sun.y, b2.x, b2.y, "rgba(239,68,68,.55)", 2, 1);
+      }
+
+      fillCircle(ctx, center.x, center.y, 4, "rgba(231,246,245,.9)", 1);
+      updateLabelsAndEquation();
+    }
+
+    let raf = null;
+    function tick(t){
+      const dtSec = clamp((t - lastT) / 1000, 0, 0.2);
+      lastT = t;
+      drawScene(dtSec);
+      raf = requestAnimationFrame(tick);
+    }
+    function requestDraw(){
+      if (raf) return;
+      lastT = performance.now();
+      raf = requestAnimationFrame(tick);
+    }
+
+    async function refreshPythonTableAndUI(){
+      const wallNormalAz = parseFloat(els.wallNormalAz.value);
+      const offsetPct = parseFloat(els.offsetPct.value);
+      const width = parseFloat(els.smoothWidth.value);
+      const edge = parseFloat(els.edge.value);
+      await fetchTables(wallNormalAz, offsetPct, width, edge);
+      buildReadoutTable();
+      updateLabelsAndEquation();
+    }
+
+    function onAnyParamLabelUpdate(){
+      updateLabelsAndEquation();
+      requestDraw();
+    }
+
+    els.wallNormalAz.addEventListener("input", async () => { syncWallNormalFromSlider(); await refreshPythonTableAndUI(); requestDraw(); });
+    els.wallNormalAzNum.addEventListener("input", async () => { syncWallNormalFromNum(); await refreshPythonTableAndUI(); requestDraw(); });
+
+    els.offsetPct.addEventListener("input", async () => { syncOffsetFromSlider(); await refreshPythonTableAndUI(); requestDraw(); });
+    els.offsetPctNum.addEventListener("input", async () => { syncOffsetFromNum(); await refreshPythonTableAndUI(); requestDraw(); });
+
+    els.smoothWidth.addEventListener("input", async () => { syncWidthFromSlider(); await refreshPythonTableAndUI(); requestDraw(); });
+    els.smoothWidthNum.addEventListener("input", async () => { syncWidthFromNum(); await refreshPythonTableAndUI(); requestDraw(); });
+
+    els.edge.addEventListener("input", async () => { syncEdgeFromSlider(); await refreshPythonTableAndUI(); requestDraw(); });
+    els.edgeNum.addEventListener("input", async () => { syncEdgeFromNum(); await refreshPythonTableAndUI(); requestDraw(); });
+
+    [els.sunAz, els.blindPct, els.gap, els.sunRadius, els.blindLen, els.showRays, els.rate].forEach(el=>{
+      el.addEventListener("input", onAnyParamLabelUpdate);
+    });
+
+    els.play.addEventListener("click", ()=>{ playing = true; lastT = performance.now(); requestDraw(); });
+    els.pause.addEventListener("click", ()=>{ playing = false; requestDraw(); });
+    els.reset.addEventListener("click", ()=>{ playing = false; els.sunAz.value = 114; updateLabelsAndEquation(); requestDraw(); });
+
+    els.toggleTrack.addEventListener("click", ()=>{
+      tracking = !tracking;
+      updateTrackUI();
+      updateLabelsAndEquation();
+      requestDraw();
+    });
+
+    window.addEventListener("resize", () => { raf = null; requestDraw(); });
+
+    (async function init(){
+      syncWallNormalFromSlider();
+      syncOffsetFromSlider();
+      syncWidthFromSlider();
+      syncEdgeFromSlider();
+      updateTrackUI();
+
+      els.sunAz.value = 114;
+      playing = true;
+      lastT = performance.now();
+
+      await refreshPythonTableAndUI();
+      requestDraw();
+    })();
+  </script>
+</body>
+</html>
